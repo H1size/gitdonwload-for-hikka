@@ -1,31 +1,9 @@
-#meta developer: @qShad0_bio
 import os
 import tempfile
 import zipfile
+import aiohttp
 from git import Repo
-from telethon import TelegramClient, events, sync, utils
 from .. import loader, utils
-import os
-import wget
-
-def download_file(url, output_path=None):
-    """
-    Скачивает файл по указанному URL с помощью wget.
-
-    :param url: URL файла для скачивания
-    :param output_path: Путь для сохранения файла (опционально)
-    :return: Путь к скачанному файлу
-    """
-    try:
-        if output_path:
-            # Если указан путь для сохранения, используем его
-            filename = wget.download(url, out=output_path)
-        else:
-            # Иначе скачиваем в текущую директорию
-            filename = wget.download(url)
-        return filename
-    except Exception as e:
-        return "Error"
 
 class GitRepoMod(loader.Module):
     """Клонирует git репозиторий и отправляет его в виде zip-архива"""
@@ -35,19 +13,22 @@ class GitRepoMod(loader.Module):
     @loader.command()
     async def git(self, message):
         """Клонирует git репозиторий и отправляет его в виде zip-архива"""
-        args = utils.get_args_raw(message)
-        if not args:
-            await utils.answer(message, "<b>Укажите URL git репозитория.</b>")
-            return
+        if message.reply_to_msg_id:
+            replied_message = await message.get_reply_message()
+            url = replied_message.message.strip()
+        else:
+            args = utils.get_args_raw(message)
+            if not args:
+                await utils.answer(message, "<b>Укажите URL git репозитория.</b>")
+                return
+            url = args.strip()
 
-        url = args.strip()
         await utils.answer(message, "<b>Начинаю загрузку....</b>")
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
                 repo_dir = os.path.join(temp_dir, "repo")
                 os.makedirs(repo_dir, exist_ok=True)
 
-                # Клонирование репозитория
                 try:
                     repo = Repo.clone_from(url, repo_dir)
                     repo_name = os.path.basename(repo.remotes.origin.url.rstrip('.git'))
@@ -55,7 +36,6 @@ class GitRepoMod(loader.Module):
                     await utils.answer(message, f"<b>Ошибка при клонировании репозитория: {str(e)}</b>")
                     return
 
-                # Архивация репозитория
                 zip_file = os.path.join(temp_dir, f"{repo_name}.zip")
                 try:
                     with zipfile.ZipFile(zip_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
@@ -77,26 +57,36 @@ class GitRepoMod(loader.Module):
     @loader.command()
     async def wget(self, message):
         """Сохраняет файл из интернета"""
-        args = utils.get_args_raw(message)
-        if not args:
-            await utils.answer(message, "<b>Укажите URL с файлом</b>")
-            return
+        if message.reply_to_msg_id:
+            replied_message = await message.get_reply_message()
+            url = replied_message.message.strip()
+        else:
+            args = utils.get_args_raw(message)
+            if not args:
+                await utils.answer(message, "<b>Укажите URL с файлом</b>")
+                return
+            url = args.strip()
 
-        url = args.strip()
         await utils.answer(message, "<b>Начинаю загрузку....</b>")
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
-                repo_dir = os.path.join(temp_dir, "wget")
-                os.makedirs(repo_dir, exist_ok=True)
-
-                # Клонирование репозитория
+                downloaded_file_path = os.path.join(temp_dir, os.path.basename(url))
+                
+                # Скачивание файла
                 try:
-                    repo = download_file(url, repo_dir)
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url) as resp:
+                            if resp.status == 200:
+                                with open(downloaded_file_path, 'wb') as f:
+                                    f.write(await resp.read())
+                            else:
+                                await utils.answer(message, "<b>Ошибка при скачивании файла.</b>")
+                                return
                 except Exception as e:
                     await utils.answer(message, f"<b>Ошибка сохранения: {str(e)}</b>")
                     return
 
-                await utils.answer_file(message, repo, f"<b>Файл {url} успешно сохранен</b>")
+                await utils.answer_file(message, downloaded_file_path, f"<b>Файл {url} успешно сохранен</b>")
                 await message.delete()
 
         except Exception as e:
